@@ -29,6 +29,21 @@ export function createDatabase(filename = 'data/videos.sqlite') {
       updatedAt TEXT NOT NULL
     )
   `);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS video_pages (
+      id TEXT PRIMARY KEY,
+      videoId TEXT NOT NULL UNIQUE,
+      slug TEXT NOT NULL UNIQUE,
+      title TEXT NOT NULL,
+      description TEXT NOT NULL,
+      theme TEXT NOT NULL,
+      layout TEXT NOT NULL DEFAULT '{"descriptionBelowVideo":false,"actionsBelowVideo":true}',
+      blocks TEXT NOT NULL,
+      createdAt TEXT NOT NULL,
+      updatedAt TEXT NOT NULL
+    )
+  `);
+  ensureColumn(db, 'video_pages', 'layout', 'TEXT NOT NULL DEFAULT \'{"descriptionBelowVideo":false,"actionsBelowVideo":true}\'');
   return db;
 }
 
@@ -81,12 +96,89 @@ export function updateVideo(db, id, patch) {
   return getVideo(db, id);
 }
 
+export function updateVideoFile(db, id, file) {
+  const existing = getVideo(db, id);
+  if (!existing) return null;
+
+  db.prepare(`
+    UPDATE videos SET
+      originalName = @originalName,
+      storedName = @storedName,
+      mimeType = @mimeType,
+      size = @size,
+      updatedAt = @updatedAt
+    WHERE id = @id
+  `).run({
+    id,
+    originalName: file.originalName,
+    storedName: file.storedName,
+    mimeType: file.mimeType,
+    size: file.size,
+    updatedAt: new Date().toISOString()
+  });
+
+  return getVideo(db, id);
+}
+
 export function deleteVideo(db, id) {
   const existing = getVideo(db, id);
   if (!existing) return null;
 
+  db.prepare('DELETE FROM video_pages WHERE videoId = ?').run(id);
   db.prepare('DELETE FROM videos WHERE id = ?').run(id);
   return existing;
+}
+
+export function getVideoPageByVideoId(db, videoId) {
+  const row = db.prepare('SELECT * FROM video_pages WHERE videoId = ?').get(videoId);
+  return row ? hydrateVideoPage(row) : null;
+}
+
+export function getVideoPageBySlug(db, slug) {
+  const row = db.prepare('SELECT * FROM video_pages WHERE slug = ?').get(slug);
+  return row ? hydrateVideoPage(row) : null;
+}
+
+export function upsertVideoPage(db, page) {
+  const existing = getVideoPageByVideoId(db, page.videoId);
+  const now = new Date().toISOString();
+
+  if (existing) {
+    db.prepare(`
+      UPDATE video_pages SET
+        slug = @slug,
+        title = @title,
+        description = @description,
+        theme = @theme,
+        layout = @layout,
+        blocks = @blocks,
+        updatedAt = @updatedAt
+      WHERE videoId = @videoId
+    `).run({
+      ...page,
+      layout: JSON.stringify(page.layout),
+      blocks: JSON.stringify(page.blocks),
+      updatedAt: now
+    });
+    return getVideoPageByVideoId(db, page.videoId);
+  }
+
+  db.prepare(`
+    INSERT INTO video_pages (
+      id, videoId, slug, title, description, theme, layout, blocks, createdAt, updatedAt
+    ) VALUES (
+      @id, @videoId, @slug, @title, @description, @theme, @layout, @blocks, @createdAt, @updatedAt
+    )
+  `).run({
+    id: randomUUID(),
+    ...page,
+    layout: JSON.stringify(page.layout),
+    blocks: JSON.stringify(page.blocks),
+    createdAt: now,
+    updatedAt: now
+  });
+
+  return getVideoPageByVideoId(db, page.videoId);
 }
 
 export function insertUser(db, user) {
@@ -139,4 +231,19 @@ function hydrateVideo(row) {
     passwordEnabled: Boolean(row.passwordEnabled),
     playerOptions: JSON.parse(row.playerOptions)
   };
+}
+
+function hydrateVideoPage(row) {
+  return {
+    ...row,
+    layout: JSON.parse(row.layout || '{"descriptionBelowVideo":false,"actionsBelowVideo":true}'),
+    blocks: JSON.parse(row.blocks)
+  };
+}
+
+function ensureColumn(db, tableName, columnName, definition) {
+  const columns = db.prepare(`PRAGMA table_info(${tableName})`).all();
+  if (!columns.some((column) => column.name === columnName)) {
+    db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
+  }
 }

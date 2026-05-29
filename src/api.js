@@ -1,3 +1,5 @@
+import { withAppBase } from './paths.js';
+
 const tokenKey = 'videoEmbedAdminToken';
 
 export function getAdminToken() {
@@ -13,7 +15,7 @@ export function clearAdminToken() {
 }
 
 export async function loginAdmin({ username, password }) {
-  const data = await parse(await fetch('/api/auth/login', {
+  const data = await parse(await fetch(withAppBase('/api/auth/login'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ username, password })
@@ -23,7 +25,7 @@ export async function loginAdmin({ username, password }) {
 }
 
 export async function getCurrentAdmin() {
-  return parse(await fetch('/api/auth/me', { headers: authHeaders() }));
+  return parse(await fetch(withAppBase('/api/auth/me'), { headers: authHeaders() }));
 }
 
 export async function uploadVideo({ title, password, file }) {
@@ -31,7 +33,7 @@ export async function uploadVideo({ title, password, file }) {
   form.append('title', title);
   if (password) form.append('password', password);
   form.append('video', file);
-  return parse(await fetch('/api/videos', {
+  return parse(await fetch(withAppBase('/api/videos'), {
     method: 'POST',
     headers: authHeaders(),
     body: form
@@ -39,34 +41,56 @@ export async function uploadVideo({ title, password, file }) {
 }
 
 export async function listVideos() {
-  return parse(await fetch('/api/videos', { headers: authHeaders() }));
+  return parse(await fetch(withAppBase('/api/videos'), { headers: authHeaders() }));
 }
 
 export async function updateVideo(id, payload) {
-  return parse(await fetch(`/api/videos/${id}`, {
+  return parse(await fetch(withAppBase(`/api/videos/${id}`), {
     method: 'PATCH',
     headers: authHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(payload)
   }));
 }
 
+export async function replaceVideoFile(id, file) {
+  const form = new FormData();
+  form.append('video', file);
+  return parse(await fetch(withAppBase(`/api/videos/${id}/file`), {
+    method: 'PUT',
+    headers: authHeaders(),
+    body: form
+  }));
+}
+
+export async function getVideoPage(id) {
+  return parse(await fetch(withAppBase(`/api/videos/${id}/page`), { headers: authHeaders() }));
+}
+
+export async function saveVideoPage(id, payload) {
+  return parse(await fetch(withAppBase(`/api/videos/${id}/page`), {
+    method: 'PUT',
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(payload)
+  }));
+}
+
 export async function deleteVideo(id) {
-  return parse(await fetch(`/api/videos/${id}`, {
+  return parse(await fetch(withAppBase(`/api/videos/${id}`), {
     method: 'DELETE',
     headers: authHeaders()
   }));
 }
 
 export async function getStorageInfo() {
-  return parse(await fetch('/api/admin/storage', { headers: authHeaders() }));
+  return parse(await fetch(withAppBase('/api/admin/storage'), { headers: authHeaders() }));
 }
 
 export async function listUsers() {
-  return parse(await fetch('/api/admin/users', { headers: authHeaders() }));
+  return parse(await fetch(withAppBase('/api/admin/users'), { headers: authHeaders() }));
 }
 
 export async function createUser(payload) {
-  return parse(await fetch('/api/admin/users', {
+  return parse(await fetch(withAppBase('/api/admin/users'), {
     method: 'POST',
     headers: authHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(payload)
@@ -74,15 +98,19 @@ export async function createUser(payload) {
 }
 
 export async function getEmbedVideo(id) {
-  return parse(await fetch(`/api/embed/${id}`));
+  return parse(await fetch(withAppBase(`/api/embed/${id}`)));
 }
 
 export async function verifyPassword(id, password) {
-  return parse(await fetch(`/api/embed/${id}/verify`, {
+  return parse(await fetch(withAppBase(`/api/embed/${id}/verify`), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ password })
   }));
+}
+
+export async function getPublicVideoPage(slug) {
+  return parse(await fetch(withAppBase(`/api/pages/${slug}`)));
 }
 
 async function parse(response) {

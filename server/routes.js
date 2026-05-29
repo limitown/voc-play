@@ -11,12 +11,16 @@ import {
   ensureAdminUser,
   getUserByUsername,
   getVideo,
+  getVideoPageBySlug,
+  getVideoPageByVideoId,
   insertUser,
   insertVideo,
   listUsers,
   listVideos,
   toPublicUser,
-  updateVideo
+  updateVideo,
+  updateVideoFile,
+  upsertVideoPage
 } from './db.js';
 import {
   createStoredName,
@@ -28,6 +32,7 @@ import {
 const MAX_UPLOAD_BYTES = 500 * 1024 * 1024;
 const ADMIN_TOKEN_TTL = '8h';
 const LOGIN_TOKEN_TTL = '8h';
+const PAGE_THEMES = new Set(['paper', 'slate', 'sage', 'contrast', 'gallery']);
 
 export function createApp({
   db,
@@ -174,6 +179,38 @@ export function createApp({
     return res.json({ video: toDashboardVideo(video) });
   });
 
+  app.get('/api/videos/:id/page', requireLogin, (req, res) => {
+    const video = getVideo(db, req.params.id);
+    if (!video) return res.status(404).json({ error: 'Video not found.' });
+    return res.json({ page: getVideoPageByVideoId(db, req.params.id) });
+  });
+
+  app.put('/api/videos/:id/page', requireLogin, (req, res) => {
+    const video = getVideo(db, req.params.id);
+    if (!video) return res.status(404).json({ error: 'Video not found.' });
+
+    const title = String(req.body.title || video.title).trim();
+    const slug = normalizeSlug(req.body.pageName || title);
+    if (!slug) return res.status(400).json({ error: 'Page name is required.' });
+
+    const conflicting = getVideoPageBySlug(db, slug);
+    if (conflicting && conflicting.videoId !== video.id) {
+      return res.status(409).json({ error: 'Page name is already used.' });
+    }
+
+    const page = upsertVideoPage(db, {
+      videoId: video.id,
+      slug,
+      title,
+      description: String(req.body.description || '').trim(),
+      theme: PAGE_THEMES.has(req.body.theme) ? req.body.theme : 'paper',
+      layout: normalizePageLayout(req.body.layout),
+      blocks: normalizePageBlocks(req.body.blocks)
+    });
+
+    return res.json({ page });
+  });
+
   app.patch('/api/videos/:id', requireLogin, async (req, res) => {
     const existing = getVideo(db, req.params.id);
     if (!existing) return res.status(404).json({ error: 'Video not found.' });
@@ -192,6 +229,29 @@ export function createApp({
     };
 
     const video = updateVideo(db, req.params.id, patch);
+    return res.json({ video: toDashboardVideo(video) });
+  });
+
+  app.put('/api/videos/:id/file', requireLogin, upload.single('video'), (req, res) => {
+    const existing = getVideo(db, req.params.id);
+    if (!existing) {
+      if (req.file) fs.rmSync(req.file.path, { force: true });
+      return res.status(404).json({ error: 'Video not found.' });
+    }
+    if (!req.file) return res.status(400).json({ error: 'Upload a video file.' });
+
+    const video = updateVideoFile(db, req.params.id, {
+      originalName: req.file.originalname,
+      storedName: req.file.filename,
+      mimeType: req.file.mimetype,
+      size: req.file.size
+    });
+
+    const oldFilePath = path.join(uploadDir, existing.storedName);
+    if (fs.existsSync(oldFilePath)) {
+      fs.rmSync(oldFilePath, { force: true });
+    }
+
     return res.json({ video: toDashboardVideo(video) });
   });
 
@@ -217,6 +277,19 @@ export function createApp({
     const video = getVideo(db, req.params.id);
     if (!video) return res.status(404).json({ error: 'Video not found.' });
     return res.json({ video: toEmbedVideo(video) });
+  });
+
+  app.get('/api/pages/:slug', (req, res) => {
+    const page = getVideoPageBySlug(db, normalizeSlug(req.params.slug));
+    if (!page) return res.status(404).json({ error: 'Page not found.' });
+
+    const video = getVideo(db, page.videoId);
+    if (!video) return res.status(404).json({ error: 'Video not found.' });
+
+    return res.json({
+      page,
+      video: toEmbedVideo(video)
+    });
   });
 
   app.post('/api/embed/:id/verify', async (req, res) => {
@@ -255,4 +328,38 @@ function hasValidToken(secret, videoId, token) {
   } catch {
     return false;
   }
+}
+
+function normalizeSlug(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80);
+}
+
+function normalizePageBlocks(blocks = []) {
+  if (!Array.isArray(blocks)) return [];
+  return blocks.slice(0, 12).map((block) => {
+    const url = normalizeBlockUrl(block.url);
+    return {
+      type: block.type === 'button' ? 'button' : 'linkText',
+      label: String(block.label || '').trim().slice(0, 80),
+      url
+    };
+  }).filter((block) => block.label && block.url);
+}
+
+function normalizePageLayout(layout = {}) {
+  return {
+    descriptionBelowVideo: Boolean(layout.descriptionBelowVideo),
+    actionsBelowVideo: layout.actionsBelowVideo !== false
+  };
+}
+
+function normalizeBlockUrl(value) {
+  const url = String(value || '').trim().slice(0, 500);
+  if (/^(https?:|mailto:|tel:)/i.test(url)) return url;
+  return '';
 }

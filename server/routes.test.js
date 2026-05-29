@@ -143,6 +143,80 @@ describe('video API', () => {
     expect(Buffer.from(media.body).toString()).toBe('classified-video');
   });
 
+  it('replaces an uploaded video file without changing the video id', async () => {
+    await login();
+    const firstFixture = path.join(tmpDir, 'first.mp4');
+    const secondFixture = path.join(tmpDir, 'second.mp4');
+    fs.writeFileSync(firstFixture, Buffer.from('first-video'));
+    fs.writeFileSync(secondFixture, Buffer.from('second-video'));
+
+    const upload = await withAdmin(request(app)
+      .post('/api/videos')
+      .field('title', 'Replace Me')
+      .attach('video', firstFixture));
+
+    const id = upload.body.video.id;
+    const firstStoredName = db.prepare('SELECT storedName FROM videos WHERE id = ?').get(id).storedName;
+
+    const replaced = await withAdmin(request(app)
+      .put(`/api/videos/${id}/file`)
+      .attach('video', secondFixture));
+
+    expect(replaced.status).toBe(200);
+    expect(replaced.body.video.id).toBe(id);
+    expect(replaced.body.video.originalName).toBe('second.mp4');
+    expect(replaced.body.video.size).toBe(Buffer.byteLength('second-video'));
+    expect(fs.existsSync(path.join(tmpDir, 'uploads', firstStoredName))).toBe(false);
+
+    const media = await request(app).get(`/media/${id}`);
+    expect(media.status).toBe(200);
+    expect(Buffer.from(media.body).toString()).toBe('second-video');
+  });
+
+  it('creates a public landing page for an uploaded video', async () => {
+    await login();
+    const fixture = path.join(tmpDir, 'tutorial.mp4');
+    fs.writeFileSync(fixture, Buffer.from('tutorial-video'));
+
+    const upload = await withAdmin(request(app)
+      .post('/api/videos')
+      .field('title', 'Training Clip')
+      .attach('video', fixture));
+
+    const id = upload.body.video.id;
+    const saved = await withAdmin(request(app)
+      .put(`/api/videos/${id}/page`)
+      .send({
+        pageName: 'My Training Page',
+        title: 'How to Watch This Training',
+        description: 'Use this page to follow the video.',
+        theme: 'sage',
+        layout: {
+          descriptionBelowVideo: true,
+          actionsBelowVideo: true
+        },
+        blocks: [
+          { type: 'button', label: 'Download Guide', url: 'https://example.com/guide' },
+          { type: 'linkText', label: 'Read notes', url: 'https://example.com/notes' }
+        ]
+      }));
+
+    expect(saved.status).toBe(200);
+    expect(saved.body.page).toMatchObject({
+      videoId: id,
+      slug: 'my-training-page',
+      title: 'How to Watch This Training',
+      theme: 'sage'
+    });
+    expect(saved.body.page.blocks).toHaveLength(2);
+    expect(saved.body.page.layout.descriptionBelowVideo).toBe(true);
+
+    const page = await request(app).get('/api/pages/my-training-page');
+    expect(page.status).toBe(200);
+    expect(page.body.page.description).toBe('Use this page to follow the video.');
+    expect(page.body.video.id).toBe(id);
+  });
+
   it('shows storage information and deletes a video record with its local file', async () => {
     await login();
     const fixture = path.join(tmpDir, 'delete-me.mp4');
